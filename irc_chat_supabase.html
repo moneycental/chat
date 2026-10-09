@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IRC Friends Chat</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#111;color:#ddd;font:14px "Courier New",monospace}
+.window{width:min(1100px,96vw);height:min(720px,94vh);margin:3vh auto;border:2px solid #777;background:#000;display:flex;flex-direction:column;box-shadow:8px 8px #050505}
+.titlebar{background:linear-gradient(#555,#292929);padding:6px 9px;border-bottom:2px solid #777;display:flex;justify-content:space-between;font-weight:bold}
+#topStatus{font-weight:normal;color:#aaa}.main{display:flex;min-height:0;flex:1}.chat{display:flex;flex-direction:column;flex:1;min-width:0}
+.channel,.users-title{background:#181818;padding:8px 10px;border-bottom:1px solid #444;color:#fff}
+#messages{flex:1;overflow:auto;padding:10px;background:#000}.message{margin:3px 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.time{color:#666}.nick{color:#6cf;font-weight:bold}.system{color:#888;font-style:italic}
+.users{width:180px;border-left:1px solid #444;background:#090909;display:flex;flex-direction:column}#userList{overflow:auto;padding:7px}
+.user{padding:4px;color:#aaa;overflow-wrap:anywhere}.user:before{content:"● ";color:#4c4}
+.controls{border-top:1px solid #444;padding:8px;background:#161616;display:flex;gap:6px}
+input,button{border:1px solid #777;background:#050505;color:#eee;font:inherit;padding:8px}input:focus{outline:1px solid #aaa}
+#nickname{width:140px}#message{flex:1;min-width:0}button{cursor:pointer;background:#292929;min-width:70px}button:hover{background:#444}
+.bottom{border-top:1px solid #444;padding:6px 8px;background:#181818;color:#aaa;font-size:12px}.bottom.connected{color:#6c6}.bottom.error{color:#f66}
+@media(max-width:650px){.users{width:115px}#nickname{width:95px}.controls{flex-wrap:wrap}#message{flex-basis:100%;order:-1}}
+</style></head><body>
+<div class="window">
+<div class="titlebar"><span>spongebob</span><span id="topStatus">not configured</span></div>
+<div class="main"><section class="chat"><div class="channel">chat</div>
+<div id="messages"><div class="message system">[system] Add your Supabase settings to connect.</div></div>
+<div class="controls"><input id="nickname" maxlength="24" placeholder="nickname" aria-label="Nickname"><input id="message" maxlength="500" placeholder="message..." autocomplete="off" aria-label="Message"><button id="send">Send</button></div>
+</section><aside class="users"><div class="users-title">Users (<span id="userCount">0</span>)</div><div id="userList"></div></aside></div>
+<div class="bottom" id="status">Paste your Supabase project URL and publishable key in this file.</div></div>
+<script>
+/* Setup: create a Supabase project, create the messages table using the SQL in the instructions,
+   then paste Project URL and publishable key below. Never use a service_role/secret key here. */
+const SUPABASE_URL = "https://tryvscxtiqwtqwpxxzcu.supabase.co";
+const SUPABASE_KEY = "sb_publishable_b9BsHF9SvM0W3XFT8DlnEw_C1GM6i6h";
+const $ = id => document.getElementById(id);
+const messagesEl=$("messages"), statusEl=$("status"), topStatusEl=$("topStatus"), nickInput=$("nickname"), messageInput=$("message");
+let client=null, presenceChannel=null; const seen=new Set();
+nickInput.value=localStorage.getItem("ircNickname")||"";
+function setStatus(t,c=""){statusEl.textContent=t;statusEl.className="bottom "+c;topStatusEl.textContent=c==="connected"?"connected":c==="error"?"error":"not connected";}
+function getNick(){let n=nickInput.value.trim().replace(/[<>]/g,"").slice(0,24);if(!n)n="Guest"+Math.floor(Math.random()*9000+1000);nickInput.value=n;localStorage.setItem("ircNickname",n);return n;}
+function systemMessage(t){const d=document.createElement("div");d.className="message system";d.textContent="[system] "+t;messagesEl.appendChild(d);messagesEl.scrollTop=messagesEl.scrollHeight;}
+function addMessage(r){if(seen.has(r.id))return;seen.add(r.id);const d=document.createElement("div"),time=document.createElement("span"),nick=document.createElement("span"),body=document.createElement("span");d.className="message";time.className="time";nick.className="nick";time.textContent="["+new Date(r.created_at||Date.now()).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})+"] ";nick.textContent="<"+(r.nickname||"Guest")+"> ";body.textContent=r.body||"";d.append(time,nick,body);messagesEl.appendChild(d);while(messagesEl.children.length>150)messagesEl.firstChild.remove();messagesEl.scrollTop=messagesEl.scrollHeight;}
+function renderUsers(state){const names=[];Object.values(state||{}).forEach(a=>(a||[]).forEach(x=>{if(x.nickname&&!names.includes(x.nickname))names.push(x.nickname)}));names.sort();$("userList").replaceChildren();names.forEach(n=>{const d=document.createElement("div");d.className="user";d.textContent=n;$("userList").appendChild(d)});$("userCount").textContent=names.length;}
+async function sendMessage(){if(!client)return;const body=messageInput.value.trim();if(!body)return;messageInput.value="";const {error}=await client.from("messages").insert({nickname:getNick(),body});if(error){setStatus("Send failed: "+error.message,"error");messageInput.value=body;}messageInput.focus();}
+$("send").addEventListener("click",sendMessage);messageInput.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();sendMessage();}});
+async function start(){if(!window.supabase||SUPABASE_URL.includes("PASTE_")||SUPABASE_KEY.includes("PASTE_")){setStatus("Add your Supabase URL and publishable key to the HTML.","error");return;}
+try{client=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+const {data,error}=await client.from("messages").select("id,nickname,body,created_at").order("id",{ascending:false}).limit(75);if(error)throw error;(data||[]).reverse().forEach(addMessage);
+client.channel("friends-chat-messages").on("postgres_changes",{event:"INSERT",schema:"public",table:"messages"},p=>addMessage(p.new)).subscribe();
+presenceChannel=client.channel("friends-chat-presence",{config:{presence:{key:(crypto.randomUUID?crypto.randomUUID():String(Date.now()))}}});
+presenceChannel.on("presence",{event:"sync"},()=>renderUsers(presenceChannel.presenceState())).subscribe(async state=>{if(state==="SUBSCRIBED"){await presenceChannel.track({nickname:getNick(),online_at:new Date().toISOString()});setStatus("it works","connected");systemMessage("Connected.");}else if(state==="CHANNEL_ERROR"||state==="TIMED_OUT")setStatus("Realtime connection failed. Check Supabase settings.","error");});
+nickInput.addEventListener("change",async()=>{if(presenceChannel)await presenceChannel.track({nickname:getNick(),online_at:new Date().toISOString()});});
+}catch(e){console.error(e);setStatus("Could not connect: "+e.message,"error");topStatusEl.textContent="error";}}
+start();
+</script></body></html>
